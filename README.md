@@ -8,6 +8,8 @@
 
 # 코어 알고리즘 (Core Algorithm)
 
+![IMG_1421 (1)-min](https://user-images.githubusercontent.com/67300266/103401695-411fb100-4b8d-11eb-818c-cc60bba187b6.gif) <br>
+
 * <b>고객 인식 (Customer Recognition) </b> <br>
 물체 판별기인 Yolov5와 인체 포즈 추정기인 OpenPose 연동하여 고객당 아이디 부여, 손의 위치 (파란색 점)을 추정하여 해당 아이디에 매핑.
 
