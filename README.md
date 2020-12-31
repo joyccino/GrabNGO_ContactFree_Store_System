@@ -6,7 +6,7 @@
 * 웹 표준 기술 : Flask
 * 기타 사용 프레임 워크 : bootstrap, numpy, torch,torchvision, opencv, darknet, cx-oracle, pyqt, caffe, numba, dlib, face recognition, Flask, Flask-SQLAlchemy, paramico, pillow, tensorflow, SQLAlchemy, werkzeug, scikit-learn,bcrypt, config, cryptography, h5py, absl-py, keras, matplotlib,easydict,decorator, google-auth,google-pasta, ipython,jsonpatch, jsonpointer, keras-preprocessing, markdown,mtcnn,mxnet-mkl,pickleshare(pickle),cudnn, promt-toolkit, protobuf,scikit-image, scipy, tensorflow-gpu
 
-# 코어 시스템 작동 예시 (Demo)
+# 👀 동작 맛보기 (Demo)
 
 ![IMG_1421 (1)-min](https://user-images.githubusercontent.com/67300266/103401695-411fb100-4b8d-11eb-818c-cc60bba187b6.gif) <br>
 <b>figure 1) </b> 그랩앤고 시스템 작동 예시 <br>
