@@ -10,10 +10,11 @@
 
 ![IMG_1421 (1)-min](https://user-images.githubusercontent.com/67300266/103401695-411fb100-4b8d-11eb-818c-cc60bba187b6.gif) <br>
 <b>figure 1 | </b> 그랩앤고 시스템 gif <br>
-![IMG_0762](https://user-images.githubusercontent.com/67300266/103401819-cdca6f00-4b8d-11eb-9075-2186692b26c9.jpg = 250x250) <br>
+<img src="https://user-images.githubusercontent.com/67300266/103401819-cdca6f00-4b8d-11eb-9075-2186692b26c9.jpg" width="200" height="300">  <br>
 <b>figure 2 | </b> 그랩앤고 버추얼 카트: 물건이 담기기 전. <br>
-![IMG_0761](https://user-images.githubusercontent.com/67300266/103401821-cefb9c00-4b8d-11eb-8159-d08d44c35bbd.jpg = 250x250) <br>
+<img src="https://user-images.githubusercontent.com/67300266/103401821-cefb9c00-4b8d-11eb-8159-d08d44c35bbd.jpg" width="200" height="300">
 <b>figure 3 | </b> 그랩앤고 버추얼 카트: 물건이 담기고 나서. <br>
+
 
 
 * <b>고객 인식 (Customer Recognition) </b> <br>
