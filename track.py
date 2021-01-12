@@ -1,7 +1,7 @@
 import sys
 sys.path.insert(0, './yolov5')
 
-from yolov5.utils.datasets import LoadImages, LoadStreams
+from yolov5.utils.datasets import LoadImages, LoadStreams, LoadRealsense
 from yolov5.utils.general import check_img_size, non_max_suppression, scale_coords
 from yolov5.utils.torch_utils import select_device, time_synchronized
 from deep_sort_pytorch.utils.parser import get_config
@@ -18,6 +18,9 @@ import torch.backends.cudnn as cudnn
 import numpy as np
 import math
 import multiprocessing as mp
+import pyrealsense2.pyrealsense2 as rs
+import DB_connection as db
+
 
 #Pytorch-openpose
 # sys.path.append(os.path.dirname(os.path.abspath()))
@@ -74,10 +77,14 @@ def draw_boxes(img, bbox, identities=None, offset=(0, 0)):
 
 
 def detect(opt, net, save_img=False):
-    out, source, weights, view_img, save_txt, imgsz, height_size, cpu, track, smooth = \
-        opt.output, opt.source, opt.weights, opt.view_img, opt.save_txt, opt.img_size, opt.height_size, opt.cpu, opt.track, opt.smooth
-    webcam = source == '0' or source.startswith(
-        'rtsp') or source.startswith('http') or source.endswith('.txt')
+    out, source, weights, view_img, save_txt, imgsz, height_size, cpu, track, smooth = opt.output, opt.source, opt.weights, opt.view_img, opt.save_txt, opt.img_size, opt.height_size, opt.cpu, opt.track, opt.smooth
+    
+    webcam = source == '0' or source.startswith('rtsp') or source.startswith('http') or source.endswith('.txt')
+    # identify different devices
+    ctx = rs.context()
+    devices = ctx.query_devices()
+    # print(devices[0])
+    realsense = devices[0]
 
     # Openpose
     net = net.cuda()
@@ -104,8 +111,7 @@ def detect(opt, net, save_img=False):
     half = device.type != 'cpu'  # half precision only supported on CUDA
 
     # Load model
-    model = torch.load(weights, map_location=device)[
-        'model'].float()  # load to FP32
+    model = torch.load(weights, map_location=device)['model'].float()  # load to FP32
     model.to(device).eval()
     if half:
         model.half()  # to FP16
@@ -116,17 +122,26 @@ def detect(opt, net, save_img=False):
         view_img = True
         cudnn.benchmark = True  # set True to speed up constant image size inference
         dataset = LoadStreams(source, img_size=imgsz)
+
+    if realsense:
+        view_img = True
+        cudnn.benchmark = True  # set True to speed up constant image size inference
+        dataset = LoadRealsense()
+
     else:
         view_img = True
         save_img = True
         dataset = LoadImages(source, img_size=imgsz)
 
-    # Get names and colors
+    # Get names(classname) and colors
     names = model.module.names if hasattr(model, 'module') else model.names
+    # print('name', names) # list type
+    
 
     # Run inference
     t0 = time.time()
     img = torch.zeros((1, 3, imgsz, imgsz), device=device)  # init img
+    # print('img shape-------00000', img.shape)
     # run once
     _ = model(img.half() if half else img) if device.type != 'cpu' else None
 
@@ -137,48 +152,49 @@ def detect(opt, net, save_img=False):
     people = {}
     count_o = 0
     objects = {}
-
+    #DB load
+    db = DB_Connection()
+    frame_num=0
+    
     for frame_idx, (path, img, im0s, vid_cap) in enumerate(dataset):
-
+        start_t = timeit.default_timer()
+        frame_num+=1
+        #convert 
         img = torch.from_numpy(img).to(device)
         img = img.half() if half else img.float()  # uint8 to fp16/32
+        # print ('img shape3333', img.shape) #384 640
         img /= 255.0  # 0 - 255 to 0.0 - 1.0
         if img.ndimension() == 3:
             img = img.unsqueeze(0)
-
         # Inference
         t1 = time_synchronized()
         pred = model(img, augment=opt.augment)[0]
-
         # Apply NMS
-        pred = non_max_suppression(
-            pred, opt.conf_thres, opt.iou_thres, classes=opt.classes, agnostic=opt.agnostic_nms)
+        pred = non_max_suppression(pred, opt.conf_thres, opt.iou_thres, classes=opt.classes, agnostic=opt.agnostic_nms) 
         t2 = time_synchronized()
 
         # Process detections
         for i, det in enumerate(pred):  # detections per image
-            if webcam:  # batch_size >= 1
+        # for i, det in enumerate(pred):  # detections per image
+            if webcam or realsense:  # batch_size >= 1
                 p, s, im0 = path[i], '%g: ' % i, im0s[i].copy()
             else:
                 p, s, im0 = path, '', im0s
-
             s += '%gx%g ' % img.shape[2:]  # print string
             save_path = str(Path(out) / Path(p).name)
 
             if det is not None and len(det):
                 # Rescale boxes from img_size to im0 size
-                det[:, :4] = scale_coords(
-                    img.shape[2:], det[:, :4], im0.shape).round()
-
+                det[:, :4] = scale_coords(img.shape[2:], det[:, :4], im0.shape).round()
                 # Print results
                 for c in det[:, -1].unique():
                     n = (det[:, -1] == c).sum()  # detections per class
                     s += '%g %ss, ' % (n, names[int(c)])  # add to string
-
+                    
                 bbox_xywh = []
                 confs = []
                 classes = []
-
+                
                 # Adapt detections to deep sort input format
                 for *xyxy, conf, cls in det:
                     x_c, y_c, bbox_w, bbox_h = bbox_rel(*xyxy)
@@ -190,9 +206,11 @@ def detect(opt, net, save_img=False):
                 xywhs = torch.Tensor(bbox_xywh)
                 confss = torch.Tensor(confs)
                 clsss = torch.Tensor(classes)
+
                 # Pass detections to deepsort
                 outputs = deepsort.update(xywhs, confss, clsss, im0)
-                print('outputsooooooooooooooooooooooo',outputs)
+                # print('outputsooooooooooooooooooooooo',outputs)
+
                 # detections = [Detection(bbox_tlwh[i], conf, features[i], classes[i]) for i, conf in enumerate(
                 #     confidences) if conf > self.min_confidence]
                 # entity = [ if ]
@@ -204,12 +222,12 @@ def detect(opt, net, save_img=False):
                     class_id = outputs[:,-1]
                     count_P = np.count_nonzero(class_id == 0) # 사람만 카운트
                     count_O = np.count_nonzero(class_id) # 사람 아닌것만 카운트
-                    print('사람숫자:  ', count_p)
+
+                    # boudning box (detected object)
                     draw_boxes(im0, bbox_xyxy, identities)
-                    cv2.circle(im0,
-                               (bbox_xyxy[0][0] + int((bbox_xyxy[0][2] - bbox_xyxy[0][0])/2),
-                                bbox_xyxy[0][1] + int((bbox_xyxy[0][3] - bbox_xyxy[0][1])/2)),
-                               10, (0, 0, 255), -1)  # test
+                    # object center point
+                    cv2.circle(im0,(bbox_xyxy[0][0] + int((bbox_xyxy[0][2] - bbox_xyxy[0][0])/2),bbox_xyxy[0][1] + int((bbox_xyxy[0][3] - bbox_xyxy[0][1])/2)),10, (0, 0, 255), -1)  # test
+                    
             else:
                 # 마지막 물체나 사람이 초기화 될시 그정보를 어떻게 이용할지!
                 deepsort.increment_ages()
@@ -217,31 +235,30 @@ def detect(opt, net, save_img=False):
                 people = {}
                 count_o = 0
                 objects = {}
+
             # Print time (inference + NMS)
-            print('%sDone. (%.3fs)' % (s, 1 /  t2 - t1))
+            # print('%sDone. (%.3fs)' % (s, 1 / t2 - t1))
 
-            # # Stream results
-            # if view_img:
-            #     cv2.imshow(p, im0)
-            #     if cv2.waitKey(1) == ord('q'):  # q to quit
-            #         raise StopIteration
-
-        # openpose run_demo #########################################################################
-        # im0 = im0.tolist()
-        orig_img = im0.copy()
-        heatmaps, pafs, scale, pad = infer_fast(net, im0s[0], height_size, stride, upsample_ratio, cpu)
+#################################### openpose ############################################
+        #im0 = im0.tolist()  => if webcam
+        im0 = np.asarray(im0) 
+        orig_img = im0.copy() 
+        heatmaps, pafs, scale, pad = infer_fast(net, im0s[0], height_size, stride, upsample_ratio, cpu) #720 1280
 
         total_keypoints_num = 0
         all_keypoints_by_type = []
         for kpt_idx in range(num_keypoints):  # 19th for bg
-            total_keypoints_num += extract_keypoints(heatmaps[:, :, kpt_idx], all_keypoints_by_type,
-                                                     total_keypoints_num)
+            total_keypoints_num += extract_keypoints(heatmaps[:, :, kpt_idx], all_keypoints_by_type, total_keypoints_num)
 
         pose_entries, all_keypoints = group_keypoints(all_keypoints_by_type, pafs)
         for kpt_id in range(all_keypoints.shape[0]):
             all_keypoints[kpt_id, 0] = (all_keypoints[kpt_id, 0] * stride / upsample_ratio - pad[1]) / scale
             all_keypoints[kpt_id, 1] = (all_keypoints[kpt_id, 1] * stride / upsample_ratio - pad[0]) / scale
+
+        ###### wrist ######
         current_poses = []
+        current_wrists = []
+        current_objects = []
         for n in range(len(pose_entries)):
             if len(pose_entries[n]) == 0:
                 continue
@@ -252,10 +269,12 @@ def detect(opt, net, save_img=False):
                     pose_keypoints[kpt_id, 1] = int(all_keypoints[int(pose_entries[n][kpt_id]), 1])
             pose = Pose(pose_keypoints, pose_entries[n][18])
 
+######################### comparing btw pose id & detected id  ##############################
             if det is not None and len(det):
                 for o in outputs:
                     xyxy = o[:4]
                     class_id = o[-1]
+                    track_id = o[4:5] 
 
                     if class_id == 0: # 사람일때 모든 사람의 중심 좌표와 맞나 검사
                         x1 = int(pose.bbox[0]) + int(pose.bbox[2]/2)
@@ -264,14 +283,24 @@ def detect(opt, net, save_img=False):
                         y2 = xyxy[1] + int((xyxy[3] - xyxy[1]) / 2)
                         if cal_dist(x1, y1, x2, y2) < 70: # 두개의 객체가 사람일시 좌표값으로 동일한 객체인지 체크
                             current_poses.append(pose)
+                            wrists = pose.draw(im0s[0])
+                            current_wrists.append([track_id, wrists])
+                    else:
+                        x2 = xyxy[0] + int((xyxy[2] - xyxy[0]) / 2)
+                        y2 = xyxy[1] + int((xyxy[3] - xyxy[1]) / 2)
+                        current_objects.append([track_id, class_id, [x2, y2]])
+        # print('current_wrists',current_wrists)
+        # print('current_objects',current_objects)
 
+
+########################### 카트에 물건을 담을때 쓰일 모든 기능들 ###########################
         if track:
             track_poses(previous_poses, current_poses, smooth=smooth)
             previous_poses = current_poses
-        for pose in current_poses:
-            wrists = pose.draw(im0s[0])
 
-            ################ 카트에 물건을 담을때 쓰일 모든 기능들
+        # for pose in current_poses:
+        #     wrists = pose.draw(im0s[0])
+     
             if det is not None and len(det):
                 if len(outputs) > 0:
                     class_id = outputs[:,-1]
@@ -280,18 +309,28 @@ def detect(opt, net, save_img=False):
                     print('사람숫자:  ', count_p)
                     print('물건숫자:  ', count_O)
 
-                    ############################ 사람과 물건을 딕셔너리에 삽입 ##############################
-                    ####### 사람만있는 어레이를 만듬
+                    ### 물건만 있는 어레이 만들기
+                    o_list = []
+                    objects_copy = {}
+                    [o_list.append(i) for i, outp in enumerate(outputs) if outp[-1] == 0]
+                    o_outputs = np.delete(outputs, o_list, axis=0)
+             
+                    ########################### 사람과 물건을 딕셔너리에 삽입 ##############################
+                    ######## 사람만있는 어레이를 만듬
                     p_list = []
                     people_copy = {}
                     [p_list.append(i) for i, outp in enumerate(outputs) if outp[-1] != 0]
                     p_outputs = np.delete(outputs, p_list, axis=0)
 
-                    ######### 사람의 수가 증가시
+                    ######## 사람의 수가 증가시
                     if count_P > count_p:
+                        #get checked in user id 
+                        customer_id = db.select_user()
+                        customer_name = db.get_username(customer_id)
                         if count_p == 0:
+                            # for p_output, wrist in zip(p_outputs, current_wrists): #for 문하나 더써서 넣기
                             for p_output in p_outputs:
-                                people.setdefault(int(p_output[4:5]))
+                                people.setdefault(int(p_output[4:5]), customer_id)
                             count_p = count_P
                         else:
                             for p in people: # 새로운 사람들을 딕셔너리에 카피
@@ -300,32 +339,59 @@ def detect(opt, net, save_img=False):
                                         people_copy.setdefault(int(outp[4:5]))
                             #카피된 딕셔너리를 사람들에 넣기
                             for p in people_copy:
-                                people.setdefault(p)
+                                people.setdefault(p,customer_id)
                             count_p = count_P
+                        db.update_user(customer_id)
                     elif count_P < count_p: # 사람수 감소시
                         k_list = p_outputs[:, 4:5]
                         for outp in people:
                             if outp not in k_list:
                                 people_copy.setdefault(outp)
-                        print('%%%%%%%%%%%%%%%%% peopleeee ', people_copy, count_P, count_p)
                         # 카피된 딕셔너리를 사람들에서 삭제
                         for o in list(people_copy):
-                            del people[o]
+                            ###################### 검출되는 오브젝트들은 카트에 넣으면 안됨
+                            k_list = o_outputs[:,4:5]
+                            for key, val in objects.items():
+                                if key in k_list:
+                                    objects[key] = [val[0]]
+                            del_list = []
+                            ############################ 카트에 담을 키를 리스트에 담음  #################################################
+                            for key, val in objects.items():
+                                if len(val) == 2:
+                                    if val[1] == o:
+                                        del_list.append(key)
+                            print('del_list',del_list)
+                            for key in del_list:
+                                ############################### 카트에 담기
+                                val_list = objects.get(key)
+                                print('val_list',val_list)
+                                product_id = val_list[0]
+                                track_id = val_list[1]
+                                customer_id = people.get(track_id)
+                                print('customer_idproduct_id', customer_id, product_id)
+                                db.insert_into_cart(customer_id,product_id)
+                                del objects[key]
+                                print('Deleted',objects)
+
+                            del people[o] # 사람 삭
+                            count_o = count_O
                         count_p = count_P
 
-                    ### 물건만 있는 어레이 만들기
-                    o_list = []
-                    objects_copy = {}
-                    [o_list.append(i) for i, outp in enumerate(outputs) if outp[-1] == 0]
-                    o_outputs = np.delete(outputs, o_list, axis=0)
-
-                    ###### 물건수 증가시
+                    ##### 물건수 증가시
                     if count_O > count_o:
-                        if count_o == 0: # 물건이 하나도 없다가 카메라에 잡실시 모두 집어 넣기
+                        #get product name
+                        # product_id = db.select_product()
+                        # product_name = db.get_productname(product_id)
+                        # 물건이 하나도 없다가 카메라에 잡힐경우 모두 집어 넣기
+                        if count_o == 0: 
                             for o in o_outputs:
-                                objects.setdefault(int(o[4:5]),o[-1])  # must insert customerId with DB
+                                objects.setdefault(int(o[4:5]),o[-1]) 
+                                # insert customerId with DB
+                                # insert_cart(customer_id,product_id,count_o)
+                                print('count o type', type(count_o))
                             count_o = count_O
-                        else: # 물건이 증가
+                        # 물건이 증가
+                        else: 
                             for o in objects:
                                 for outp in o_outputs:
                                     if o != outp[4:5]:
@@ -333,34 +399,61 @@ def detect(opt, net, save_img=False):
                             for k, v in objects_copy.items():
                                 objects.setdefault(k, v)
                             count_o = count_O
-                    elif count_O < count_o: # 물건수 감소시
-                        k_list = o_outputs[:,4:5]
-                        for outp in objects:
-                            if outp not in k_list:
-                                objects_copy.setdefault(outp)
-                        print('%%%%%%%%%%%%%%%%%objects objects objectssss ', objects_copy,count_O,count_o)
-                        # 카피된 딕셔너리를 사람들에서 삭제
-                        for o in list(objects_copy):
-                            del objects[o]
-                        count_o = count_O
                     print('people people people ', people)
                     print('objects objects objects ', objects)
 
-            else:
-                pass
+                else:
+                    pass
+            
+                # cv2.putText(im0, 'person count: {}'.format(count_p), (480,700), cv2.FONT_HERSHEY_COMPLEX, 1, (255, 0, 255),2)
+                # cv2.putText(im0, 'object count: {}'.format(count_O), (480,750), cv2.FONT_HERSHEY_COMPLEX, 1, (255, 0, 255),2)
+            ################ 좌표 점으로 손과 물체의 거리 인식
+            if len(current_objects) > 0:
+                # current_wrists [[array([1]), [[388, 476],[388, 476]]]]
+                # current_objects[[array([2]), [242, 328]]]
+                for object in current_objects:
+                    if len(current_objects) > 0:
+                        for person in current_wrists:
+                            o_track_id = int(object[0])
+                            o_class_id = int(object[1])
+                            xy = object[2]
+                            print('xy', xy)
+                            p_track_id = int(person[0])
+                            wrists_list = person[1]
+                            for wri in wrists_list: #손이 둘다 아니면 하나만 잡혔을 시
+                                print('wri',wri)
+                                if cal_dist(xy[0],xy[1],wri[0],wri[1]) < 80:
+                                    objects[o_track_id] = [o_class_id, p_track_id]
+                                    print('objects[o_track_id]',objects[o_track_id])
 
-        img = cv2.addWeighted(orig_img, 0.6, im0s[0], 0.4, 0)
-        for pose in current_poses:
-            cv2.rectangle(img, (pose.bbox[0], pose.bbox[1]),
-                          (pose.bbox[0] + pose.bbox[2], pose.bbox[1] + pose.bbox[3]), (0, 255, 0))
-            cv2.circle(img, (int(pose.bbox[0]) + int(pose.bbox[2]/2), int(pose.bbox[1]) + int(pose.bbox[3]/2)), 10, (0, 255, 0), -1) # test
-            if track:
-                cv2.putText(img, 'id: {}'.format(pose.id), (pose.bbox[0], pose.bbox[1] - 16),
-                            cv2.FONT_HERSHEY_COMPLEX, 0.5, (0, 0, 255))
-        cv2.imshow('Lightweight Human Pose Estimation Python Demo', img)
+            img = cv2.addWeighted(orig_img, 0.6, im0s[0], 0.4, 0) #720 1280
+            idx = 0
+            for pose in current_poses:
+                #pose bounding box
+                # cv2.rectangle(img, (pose.bbox[0], pose.bbox[1]),(pose.bbox[0] + pose.bbox[2], pose.bbox[1] + pose.bbox[3]), (255, 255, 0),2)
+                cv2.circle(img, (int(pose.bbox[0]) + int(pose.bbox[2]/2), int(pose.bbox[1]) + int(pose.bbox[3]/2)), 10, (0, 255, 0), -1) # test
+                #track id list 
+                if track and class_name == 'person':
+                    pose.id = customer_id
+                    # tracked person id (left top)
+                    # cv2.putText(img, 'person id: {} is being tracked '.format(pose.id), (5,35+idx), cv2.FONT_HERSHEY_COMPLEX, 1, (255, 0, 255),2)
+                    cv2.putText(img, 'customer {}: {} is being tracked '.format(pose.id, customer_name), (5,35+idx), cv2.FONT_HERSHEY_COMPLEX, 1, (255, 0, 255),2)
+                    idx+=20
+                #person id (above bbx)
+                # cv2.putText(img, 'id: {} '.format(pose.id),(bbox_xyxy[0][0], bbox_xyxy[0][1]), cv2.FONT_HERSHEY_COMPLEX, 1, (0, 0, 255), 2)
+                    cv2.putText(img, 'id: {} '.format(pose.id),(bbox_xyxy[0][0], bbox_xyxy[0][1]), cv2.FONT_HERSHEY_COMPLEX, 1, (0, 0, 255), 2)
 
+################# result #################
+            terminate_t = timeit.default_timer()
+            result = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+            cv2.imshow('Grab_N_Go', result)
+            FPS=int(1./(terminate_t-start_t))
+            print('FPS',FPS)
 
     print('Done. (%.3fs)' % (time.time() - t0))
+
+
+    
 
 def infer_fast(net, img, net_input_height_size, stride, upsample_ratio, cpu,
                pad_value=(0, 0, 0), img_mean=np.array([128, 128, 128], np.float32), img_scale=np.float32(1/256)):
@@ -386,6 +479,7 @@ def infer_fast(net, img, net_input_height_size, stride, upsample_ratio, cpu,
     pafs = cv2.resize(pafs, (0, 0), fx=upsample_ratio, fy=upsample_ratio, interpolation=cv2.INTER_CUBIC)
 
     return heatmaps, pafs, scale, pad
+
 
 def cal_dist(x1,y1,x2,y2):
     dist = math.sqrt((x1-x2)**2+(y1-y2)**2)
