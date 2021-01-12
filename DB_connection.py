@@ -7,7 +7,7 @@ class DB_Connection():
     def __init__(self):
         os.putenv('NLS_LANG', '.UTF8')
         # 연결에 필요한 기본 정보 (유저, 비밀번호, 데이터베이스 서버 주소)
-        self.connection = cx_Oracle.connect("Ai_team1", "1234", "192.168.0.12:1521/orcl")
+        self.connection = cx_Oracle.connect('유저', '비밀번호', '데이터베이스 서버 주소')
         self.cursor = self.connection.cursor()
         self.connection.autocommit = True
 
