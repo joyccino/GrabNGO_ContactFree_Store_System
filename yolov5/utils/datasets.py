@@ -18,6 +18,7 @@ import torch
 from PIL import Image, ExifTags
 from torch.utils.data import Dataset
 from tqdm import tqdm
+import pyrealsense2.pyrealsense2 as rs
 
 from utils.general import xyxy2xywh, xywh2xyxy
 from utils.torch_utils import torch_distributed_zero_first
@@ -337,6 +338,81 @@ def img2label_paths(img_paths):
     sa, sb = os.sep + 'images' + os.sep, os.sep + 'labels' + os.sep  # /images/, /labels/ substrings
     return [x.replace(sa, sb, 1).replace('.' + x.split('.')[-1], '.txt') for x in img_paths]
 
+class LoadRealsense:
+    def __init__(self, width='640', height='480', fps='30'):
+        # Variabels for setup
+        self.width = width
+        self.height = height
+        self.fps = fps
+        self.imgs = [None]
+        self.img_size = 640
+        self.half = False
+
+        # Setup
+        self.pipe = rs.pipeline()
+        self.cfg = rs.config()
+        self.cfg.enable_device('036322250716')
+        # self.cfg.enable_device(source)  #036322250716
+
+        # Start streaming
+        self.profile = self.pipe.start(self.cfg)
+        self.path = rs.pipeline_profile()
+        # print('path', self.path)
+
+        # print("streaming at w = " + str(self.width) + " h = " + str(self.height) + " fps = " + str(self.fps))
+
+    def update(self):
+        while True:
+            #Wait for frames and get the data
+            self.frameset = self.pipe.wait_for_frames()
+            self.frame = self.frameset.get_color_frame()
+            # frame = cv2.resize(self.frame, (self.width, self.height))
+            img0 = np.asanyarray(self.frame.get_data())
+            self.imgs = np.expand_dims(img0, axis=0)
+            break
+
+        s = np.stack([letterbox(x, new_shape=self.img_size)[0].shape for x in self.imgs], 0)  # inference shapes
+        # print("ini s: " + str(np.shape(s)))
+
+        self.rect = np.unique(s, axis=0).shape[0] == 1
+        # print("ini rect: " + str(np.shape(self.rect)))
+
+        if not self.rect:
+            print('WARNING: Different stream shapes detected. For optimal performance supply similarly-shaped streams.')
+
+        time.sleep(0.01)  # wait time
+        return self.rect #,depth_scale
+
+    def __iter__(self):
+        self.count = -1
+        return self
+
+    def __next__(self):
+        self.count += 1
+        self.rect = self.update()
+        img0 = self.imgs.copy() #720 1280
+        # print('img0----------',img0.shape)
+        if cv2.waitKey(1) == ord('q'):  # q to quit
+            cv2.destroyAllWindows()
+            raise StopIteration
+
+        img_path = 'realsense.jpg'
+        # Letterbox
+        img = [letterbox(x, new_shape=self.img_size, auto=self.rect)[0] for x in img0]
+
+        # Stack
+        img = np.stack(img, 0)
+        # print('img size2222222222222222222222', img.shape) #256 416
+        #print("ini img-padding: " + str(np.shape(img)))
+
+        # Convert Image
+        img = img[:, :, :, ::-1].transpose(0, 3, 1, 2) 
+        # BGR to RGB, to 3x416x416, uint8 to float32
+        img = np.ascontiguousarray(img, dtype=np.float16 if self.half else np.float32)
+        return str(img_path), img, img0, None
+
+    def __len__(self):
+        return 0  # 1E12 frames = 32 streams at 30 FPS for 30 years
 
 class LoadImagesAndLabels(Dataset):  # for training/testing
     def __init__(self, path, img_size=640, batch_size=16, augment=False, hyp=None, rect=False, image_weights=False,
