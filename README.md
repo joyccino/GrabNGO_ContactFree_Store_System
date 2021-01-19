@@ -24,6 +24,6 @@
 1) 판매 상품에 대해 커스텀 학습시킨 모델을 YOLOv5 에 적용하여 실시간 상품 인식 후에 상품당 Bounding Box 그려준 후 상품의 아이디 표시. <br>
 2) 고객이 상품을 잡았을 경우 Bounding Box 지워주고 해당 고객의 버추얼 장바구니에 넣어줌.
 
-* <b>상품을 가상 장바구니에서 제외하는 경우 (Product removal from a virtual cart)</b> <br>
+* <b>상품을 가상 장바구니에서 제외하는 경우 (Product removal from a customer's virtual cart)</b> <br>
 1) 상품이 다시 판매대에 놓였을 경우 다시  Bounding Box 와 아이디 표시 <br>
 2) 고객 가상 장바구니에서 제외 
