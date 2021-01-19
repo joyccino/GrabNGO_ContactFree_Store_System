@@ -25,5 +25,5 @@
 2) 고객이 상품을 잡았을 경우 Bounding Box 지워주고 해당 고객의 버추얼 장바구니에 넣어줌.
 
 * <b>상품을 가상 장바구니에서 제외하는 경우 (Product removal from a customer's virtual cart)</b> <br>
-1) 상품이 다시 판매대에 놓였을 경우 다시  Bounding Box 와 아이디 표시 <br>
+1) 상품이 다시 판매대에 놓였을 경우 다시  Bounding Box 와 상품 아이디 표시 <br>
 2) 고객 가상 장바구니에서 제외 
